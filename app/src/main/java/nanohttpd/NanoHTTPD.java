@@ -1,4 +1,4 @@
-package com.example.corwin.jukebox;
+package nanohttpd;
 
 import android.util.Log;
 
@@ -836,11 +836,12 @@ public abstract class NanoHTTPD {
          */
         void parseBody(Map<String, String> files) throws IOException, ResponseException;
         void parseBody(Map<String, String> files, String tempDir) throws IOException, ResponseException;
+
+        public static final String MULTIPLE_VALUE_DELIM = "\0";
     }
 
     protected class HTTPSession implements IHTTPSession {
         public static final int BUFSIZE = 8192;
-        public static final String MULTIPLE_VALUE_DELIM = "\0";
         private final TempFileManager tempFileManager;
         private final OutputStream outputStream;
         private PushbackInputStream inputStream;
@@ -956,6 +957,9 @@ public abstract class NanoHTTPD {
             }
         }
 
+
+        /*******
+
         @Override
         public void parseBody(Map<String, String> files) throws IOException, ResponseException {
             RandomAccessFile randomAccessFile = null;
@@ -1047,6 +1051,129 @@ public abstract class NanoHTTPD {
                 safeClose(in);
             }
             Log.d("Nano", "/parseBody");
+        }
+
+         ***********/
+
+        private String getBoundaryString(String contentTypeHeader)
+        {
+            String prefix = "boundary=";
+            int index = contentTypeHeader.indexOf(prefix);
+            if (index == -1) return null;
+            else {
+                String boundary = contentTypeHeader.substring(index + prefix.length());
+                if (boundary.length() > 2 && boundary.startsWith("\"") && boundary.endsWith("\""))
+                    boundary = boundary.substring(1, boundary.length() - 1);
+                return boundary;
+            }
+        }
+
+        @Override
+        public void parseBody(Map<String, String> files) throws IOException, ResponseException {
+            RandomAccessFile randomAccessFile = null;
+            BufferedReader in = null;
+            try {
+                String contentType = "";
+                String contentTypeHeader = headers.get("content-type");
+
+                StringTokenizer st = null;
+                if (contentTypeHeader != null) {
+                    st = new StringTokenizer(contentTypeHeader, ",; ");
+                    if (st.hasMoreTokens()) {
+                        contentType = st.nextToken();
+                    }
+                }
+                String boundary = getBoundaryString(contentTypeHeader);
+
+                randomAccessFile = getTmpBucket();
+
+                long size;
+                if (headers.containsKey("content-length")) {
+                    size = Integer.parseInt(headers.get("content-length"));
+                } else if (splitbyte < rlen) {
+                    size = rlen - splitbyte;
+                } else {
+                    size = 0;
+                }
+
+                if (boundary != null) {
+                    try {
+                        List<SplitBoundary.FilePart> parts =
+                                SplitBoundary.readAndSplitByBoundary(inputStream, size, boundary, tempFileManager);
+                        SplitBoundary.decodeMultipartData(parts, parms, files);
+                        return;
+                    }
+                    catch (IOException e) { throw e; }
+                    catch (Exception e) { throw new IOException(e.getMessage()); }
+                }
+
+                // Now read all the body and write it to f
+                byte[] buf = new byte[512];
+                //OutputStream keep = new FileOutputStream("/tmp/out");
+                while (rlen >= 0 && size > 0) {
+                    rlen = inputStream.read(buf, 0, (int)Math.min(size, 512));
+                    size -= rlen;
+                    if (rlen > 0) {
+                        randomAccessFile.write(buf, 0, rlen);
+                        //keep.write(buf, 0, rlen);
+                        //System.out.print(new String(buf, 0, rlen));
+                    }
+                }
+                //keep.close();
+                //System.out.println();
+                //System.out.println(headers.get("content-type"));
+
+                // Get the raw body as a byte []
+                ByteBuffer fbuf = randomAccessFile.getChannel().map(FileChannel.MapMode.READ_ONLY, 0, randomAccessFile.length());
+                randomAccessFile.seek(0);
+
+                // Create a BufferedReader for easily reading it as string.
+                InputStream bin = new FileInputStream(randomAccessFile.getFD());
+                in = new BufferedReader(new InputStreamReader(bin));
+
+                // If the method is POST, there may be parameters
+                // in data section, too, read it:
+                if (Method.POST.equals(method)) {
+                    if ("multipart/form-data".equalsIgnoreCase(contentType)) {
+                        // Handle multipart/form-data
+                        if (boundary == null) {
+                            throw new ResponseException(Response.Status.BAD_REQUEST, "BAD REQUEST: Content type is multipart/form-data but boundary missing.");
+                        }
+
+                        //String boundaryStartString = "boundary=";
+                        //int boundaryContentStart = contentTypeHeader.indexOf(boundaryStartString) + boundaryStartString.length();
+                        //String boundary = contentTypeHeader.substring(boundaryContentStart, contentTypeHeader.length());
+                        //if (boundary.startsWith("\"") && boundary.endsWith("\"")) {
+                        //    boundary = boundary.substring(1, boundary.length() - 1);
+                        //}
+
+                        decodeMultipartData(boundary, fbuf, in, parms, files);
+                    } else {
+                        String postLine = "";
+                        StringBuilder postLineBuffer = new StringBuilder();
+                        char pbuf[] = new char[512];
+                        int read = in.read(pbuf);
+                        while (read >= 0 && !postLine.endsWith("\r\n")) {
+                            postLine = String.valueOf(pbuf, 0, read);
+                            postLineBuffer.append(postLine);
+                            read = in.read(pbuf);
+                        }
+                        postLine = postLineBuffer.toString().trim();
+                        // Handle application/x-www-form-urlencoded
+                        if ("application/x-www-form-urlencoded".equalsIgnoreCase(contentType)) {
+                            decodeParms(postLine, parms);
+                        } else if (postLine.length() != 0) {
+                            // Special case for raw POST data => create a special files entry "postData" with raw content data
+                            files.put("postData", postLine);
+                        }
+                    }
+                } else if (Method.PUT.equals(method)) {
+                    files.put("content", saveTmpFile(fbuf, 0, fbuf.limit()));
+                }
+            } finally {
+                safeClose(randomAccessFile);
+                safeClose(in);
+            }
         }
 
         @Override

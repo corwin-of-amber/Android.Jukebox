@@ -5,7 +5,6 @@ import android.annotation.TargetApi;
 import android.content.ClipData;
 import android.content.ClipDescription;
 import android.content.ContentResolver;
-import android.content.Context;
 import android.database.Cursor;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -31,7 +30,6 @@ import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView;
-import android.widget.BaseAdapter;
 import android.widget.CheckBox;
 import android.widget.CursorAdapter;
 import android.widget.ImageView;
@@ -59,7 +57,8 @@ import java.util.Set;
 import java.util.Timer;
 import java.util.TimerTask;
 
-import com.example.corwin.jukebox.NanoHTTPD.*;
+import nanohttpd.NanoHTTPD;
+import nanohttpd.NanoHTTPD.*;
 import com.example.corwin.jukebox.widgets.ListAdapterProxy;
 import com.example.corwin.jukebox.widgets.ListAdapterWithResize;
 
@@ -525,8 +524,8 @@ public class MainActivity extends ActionBarActivity
                 String payloadName = session.getParms().get("payload");
                 if (payloadPath != null && payloadName != null) {
                     // if multiple files are uploaded, the values would be null-delimited
-                    String[] payloadPaths = payloadPath.split(HTTPSession.MULTIPLE_VALUE_DELIM);
-                    String[] payloadNames = payloadName.split(HTTPSession.MULTIPLE_VALUE_DELIM);
+                    String[] payloadPaths = payloadPath.split(IHTTPSession.MULTIPLE_VALUE_DELIM);
+                    String[] payloadNames = payloadName.split(IHTTPSession.MULTIPLE_VALUE_DELIM);
                     if (payloadPaths.length == payloadNames.length) {
                         for (int i = 0; i < payloadPaths.length; i++) {
                             File payloadFile = new File(payloadPaths[i]);
