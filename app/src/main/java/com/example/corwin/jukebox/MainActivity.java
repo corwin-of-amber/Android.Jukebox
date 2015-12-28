@@ -2,9 +2,12 @@ package com.example.corwin.jukebox;
 
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
+import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.ClipDescription;
 import android.content.ContentResolver;
+import android.content.DialogInterface;
+import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -14,6 +17,7 @@ import android.graphics.drawable.Drawable;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.media.MediaScannerConnection;
+import android.media.audiofx.LoudnessEnhancer;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
@@ -22,6 +26,7 @@ import android.os.Looper;
 import android.provider.MediaStore;
 import android.support.v7.app.ActionBarActivity;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.DragEvent;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -49,8 +54,10 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -74,10 +81,15 @@ public class MainActivity extends ActionBarActivity
 
     private final boolean honeycomb = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB);
 
+    private SharedPreferences prefs = null;
+
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        prefs = getPreferences(MODE_PRIVATE);
 
         audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
 
@@ -103,11 +115,14 @@ public class MainActivity extends ActionBarActivity
                             @Override
                             public void run() { if (honeycomb) knob.setAlpha(1.0f); }
                         });
+                        knobAction = KNOB_ACTION_IDLE;
                         break;
 
                     case MotionEvent.ACTION_MOVE:
-                        if (event.getY() < 0 && event.getX() > 0 && event.getX() < v.getWidth())
+                        if (event.getY() < 0 && event.getX() > event.getY() && v.getWidth() - event.getX() > event.getY()) {
+                            knobAction = KNOB_ACTION_CONTROLS;
                             knob.setImageResource(R.drawable.knob_stopped);
+                        }
                         else {
                             // Restore image
                             if (mediaPlayer != null && mediaPlayer.isPlaying())
@@ -136,7 +151,8 @@ public class MainActivity extends ActionBarActivity
         knob.setOnLongClickListener(new View.OnLongClickListener() {
             @Override
             public boolean onLongClick(View v) {
-                knobDrag(v, KNOB_ACTION_SLIDER);
+                if (knobAction == KNOB_ACTION_IDLE)
+                    knobDrag(v, KNOB_ACTION_SLIDER);
                 return false;
             }
         });
@@ -164,6 +180,7 @@ public class MainActivity extends ActionBarActivity
                 String artist = c.get("name");
                 if (loadedArtist != null && loadedArtist.equals(artist)) artist = null;
                 loadMediaTracks(artist, null);
+                loadMediaAlbums(artist);
             }
         });
 
@@ -177,6 +194,7 @@ public class MainActivity extends ActionBarActivity
         });
 
         SeekBar volume = (SeekBar) findViewById(R.id.volume);
+        setVolume(volume.getProgress(), volume.getMax());
         volume.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
@@ -291,8 +309,10 @@ public class MainActivity extends ActionBarActivity
                         }
                 }
 
-                if (event.getAction() == DragEvent.ACTION_DRAG_ENDED)
+                if (event.getAction() == DragEvent.ACTION_DRAG_ENDED) {
+                    knobAction = KNOB_ACTION_IDLE;
                     knob.setAlpha(1.0f);
+                }
                 return true;
             }
 
@@ -366,8 +386,9 @@ public class MainActivity extends ActionBarActivity
 
     KnobDragShadowBuilder knobShadow = null;
     int knobAction = 0;
-    static final int KNOB_ACTION_CONTROLS = 0;
-    static final int KNOB_ACTION_SLIDER = 1;
+    static final int KNOB_ACTION_IDLE = 0;
+    static final int KNOB_ACTION_CONTROLS = 1;
+    static final int KNOB_ACTION_SLIDER = 2;
 
     @TargetApi(11)
     void knobDrag(View knob, int action) {
@@ -408,7 +429,7 @@ public class MainActivity extends ActionBarActivity
             try {
                 return allow(servlet.route(session));
             } catch (Exception e) {
-                return new Response("Jinx " + e);
+                return allow(new Response("Jinx " + e));
             }
         }
 
@@ -600,10 +621,8 @@ public class MainActivity extends ActionBarActivity
      */
     private String exportMediaLibrary() throws JSONException {
         JSONArray a = new JSONArray();
-        ListView list = (ListView) findViewById(R.id.list);
-        int len = list.getCount();
-        for (int i = 0; i < len; i++) {
-            Cursor c = (Cursor) list.getItemAtPosition(i);
+        Cursor c = queryMediaTracks(null, null);
+        while (c.moveToNext()) {
             JSONObject o = new JSONObject();
             if (honeycomb) exportRecord(c, o);
                       else exportRecord_api10(c, o);
@@ -637,17 +656,16 @@ public class MainActivity extends ActionBarActivity
     private void loadMediaLibrary() {
         loadMediaTracks(null, null);
         loadMediaArtists();
-        loadMediaAlbums();
+        loadMediaAlbums(null);
         mediaLibraryTimestamp = System.currentTimeMillis() / 1000L;
     }
 
-    void loadMediaTracks(String byArtist, String byAlbum) {
-        ListView list = (ListView) findViewById(R.id.list);
-
+    Cursor queryMediaTracks(String byArtist, String byAlbum) {
         ContentResolver resolver = getContentResolver();
 
         String[] proj = {MediaStore.Audio.Media.TITLE,
                 MediaStore.Audio.Media.ARTIST, MediaStore.Audio.Media.ALBUM,
+                MediaStore.Audio.Media.TRACK,
                 MediaStore.Audio.Media.DATA,
                 MediaStore.Audio.Media._ID};
 
@@ -664,8 +682,15 @@ public class MainActivity extends ActionBarActivity
             args.add(byAlbum);
         }
 
-        Cursor c = resolver.query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, proj, where,
-                args.toArray(new String[args.size()]), null);
+        return resolver.query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, proj, where,
+                args.toArray(new String[args.size()]),
+                MediaStore.Audio.Media.ALBUM + "," + MediaStore.Audio.Media.TRACK);
+    }
+
+    void loadMediaTracks(String byArtist, String byAlbum) {
+        ListView list = (ListView) findViewById(R.id.list);
+
+        Cursor c = queryMediaTracks(byArtist, byAlbum);
 
         String[] columns = {MediaStore.Audio.Media.TITLE};
         int[] views = {R.id.item_text};
@@ -676,9 +701,10 @@ public class MainActivity extends ActionBarActivity
         list.setAdapter(new ListAdapterWithResize(
                 //new SimpleCursorAdapter(this, R.layout.simple_item, c, columns, views, 0),  // >= v11
                 new SimpleCursorAdapter(this, R.layout.simple_item, c, columns, views),  // <= v10
-             sizer));
+                sizer));
 
         loadedArtist = byArtist;
+        loadedAlbum = byAlbum;
     }
 
     void loadMediaArtists() {
@@ -687,10 +713,19 @@ public class MainActivity extends ActionBarActivity
                 queryDistinct(MediaStore.Audio.Media.ARTIST)));
     }
 
-    void loadMediaAlbums() {
+    void loadMediaAlbums(String byArtist) {
+        String where = MediaStore.Audio.Media.IS_MUSIC + "=1";
+        List<String> args = new ArrayList<>();
+
+        if (byArtist != null) {
+            where += " AND " + MediaStore.Audio.Media.ARTIST + "=?";
+            args.add(byArtist);
+        }
+
         ListView albums = (ListView) findViewById(R.id.albums);
         albums.setAdapter(createAdapterFromValues("name",
-                queryDistinct(MediaStore.Audio.Media.ALBUM)));
+                queryDistinct(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                        MediaStore.Audio.Media.ALBUM, where, args, MediaStore.Audio.Media.ARTIST)));
     }
 
     void invalidateAllMediaLists() {
@@ -699,24 +734,69 @@ public class MainActivity extends ActionBarActivity
             ((ListView) findViewById(i)).invalidateViews();
     }
 
-    String[] queryDistinct(String column) {
-        return queryDistinct(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, column,
-                MediaStore.Audio.Media.IS_MUSIC + "=1");
-    }
-
-    String[] queryDistinct(Uri table, String column, String where) {
+    String[] queryDistinct(Uri table, String column, String where, List<String> args, String orderBy) {
         ContentResolver resolver = getContentResolver();
         String[] proj = {column};
-        Cursor c = resolver.query(table, proj, where, null, null);
+        Cursor c = resolver.query(table, proj, where,
+                args == null ? null : args.toArray(new String[args.size()]), orderBy);
+        return cursorToArray(c, 0, new LinkedHashSet<String>(c.getCount()));
+    }
+
+    String[] queryDistinct(Uri table, String column0, String column1, String where, List<String> args, String orderBy) {
+        ContentResolver resolver = getContentResolver();
+        String[] proj = {column0, column1};
+        Cursor c = resolver.query(table, proj, where,
+                args == null ? null : args.toArray(new String[args.size()]), orderBy);
+        return cursorToArray(c, 0, 1, new LinkedHashSet<String>(c.getCount()));
+    }
+
+    String[] queryDistinct(String column) {
+        return queryDistinct(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, column,
+                MediaStore.Audio.Media.IS_MUSIC + "=1", null);
+    }
+
+    String[] queryDistinct(String column0, String column1) {
+        return queryDistinct(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, column0, column1,
+                MediaStore.Audio.Media.IS_MUSIC + "=1", null);
+    }
+
+    String[] queryDistinct(Uri table, String column, String where, List<String> args) {
+        ContentResolver resolver = getContentResolver();
+        String[] proj = {column};
+        Cursor c = resolver.query(table, proj, where,
+                args == null ? null : args.toArray(new String[args.size()]), null);
+        return cursorToArray(c, 0, new HashSet<String>(c.getCount()));
+    }
+
+    String[] queryDistinct(Uri table, String column0, String column1, String where, List<String> args) {
+        ContentResolver resolver = getContentResolver();
+        String[] proj = {column0, column1};
+        Cursor c = resolver.query(table, proj, where,
+                args == null ? null : args.toArray(new String[args.size()]), null);
+        return cursorToArray(c, 0, 1, new HashSet<String>(c.getCount()));
+    }
+
+    String[] cursorToArray(Cursor c, int colindex, Collection<String> s) {
         try {
-            Set<String> s = new HashSet<>();
             while (c.moveToNext()) {
-                s.add(c.getString(0));
+                s.add(c.getString(colindex));
             }
             return s.toArray(new String[s.size()]);
         }
         finally { c.close(); }
     }
+
+    String[] cursorToArray(Cursor c, int colindex0, int colindex1, Collection<String> s) {
+        try {
+            while (c.moveToNext()) {
+                s.add(either(c.getString(colindex0), c.getString(colindex1)));
+            }
+            return s.toArray(new String[s.size()]);
+        }
+        finally { c.close(); }
+    }
+
+    private String either(String a, String b) { return (a != null && !a.equals("")) ? a : b; }
 
     ListAdapter createAdapterFromValues(String column, String... values) {
         String[] columns = {column};
@@ -1056,6 +1136,9 @@ public class MainActivity extends ActionBarActivity
                 if (item.isChecked()) stopServer();
                 else startServer();
                 return true;
+            case R.id.action_folder:
+                promptSelectFolder();
+                return true;
             case R.id.action_rescan:
                 rescanMedia();
                 return true;
@@ -1067,11 +1150,39 @@ public class MainActivity extends ActionBarActivity
         return super.onOptionsItemSelected(item);
     }
 
+    private void promptSelectFolder() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+
+        final String[] paths = new String[]
+                {"/mnt/sdcard/Music", "/mnt/external_sd/Music", "Other..."};
+
+        builder.setItems(paths, new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                dialog.dismiss();
+                String picked = paths[which];
+                if (new File(picked).isDirectory()) {
+                    SharedPreferences.Editor editor = prefs.edit();
+                    editor.putString("mediaRoot", paths[which]);
+                    editor.commit();
+                }
+                else
+                    Toast.makeText(MainActivity.this, "Directory '" + picked + "' does not exist.",
+                            Toast.LENGTH_LONG);
+            }
+        })
+            .setTitle("Current: " + getMediaRoot()); //"Set Download Folder");
+
+        AlertDialog dialog = builder.create();
+        dialog.show();
+    }
+
     // ---------------------------
     // MediaScannerConnection part
     // ---------------------------
 
     private int scanProgress = 0;
+    private int scanTotal = 0;
     private String lastFileToScan = null;
 
     private void rescanMedia() {
@@ -1081,6 +1192,7 @@ public class MainActivity extends ActionBarActivity
             Toast.makeText(this, "Media directory is empty!", Toast.LENGTH_LONG).show();
         else {
             scanProgress = 0;
+            scanTotal = paths.size();
             lastFileToScan = paths.get(paths.size() - 1);
             MediaScannerConnection.scanFile(this,
                     paths.toArray(new String[paths.size()]),
@@ -1102,7 +1214,7 @@ public class MainActivity extends ActionBarActivity
             @Override
             public void run() {
                 TextView text = (TextView) findViewById(R.id.text);
-                text.setText("Scanned " + scanProgress + ((scanProgress == 1) ? " file." : " files."));
+                text.setText("Scanned " + scanProgress + "/" + scanTotal + ((scanTotal == 1) ? " file." : " files."));
 
                 if (isLast) {
                     Toast.makeText(MainActivity.this, "Scan completed.", Toast.LENGTH_SHORT).show();
@@ -1121,6 +1233,7 @@ public class MainActivity extends ActionBarActivity
         String[] paths = {targetFile.getAbsolutePath()};
         String[] mimes = null;
         scanProgress = 0;
+        scanTotal = paths.length;
         lastFileToScan = paths[paths.length - 1];
         MediaScannerConnection.scanFile(this, paths, mimes, this);
     }
@@ -1128,7 +1241,11 @@ public class MainActivity extends ActionBarActivity
     // Storage sub-part
 
     private File getMediaRoot() {
-        return new File(Environment.getExternalStorageDirectory(), "Music");
+        String mediaRoot = prefs.getString("mediaRoot", null);
+        if (mediaRoot != null && new File(mediaRoot).isDirectory())
+            return new File(mediaRoot);
+        else
+            return new File(Environment.getExternalStorageDirectory(), "Music");
     }
 
     private List<String> findAllFiles(File dir) {

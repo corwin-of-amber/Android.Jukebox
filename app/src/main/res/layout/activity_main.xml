@@ -115,7 +115,7 @@
         android:layout_height="wrap_content"
         android:id="@+id/volume"
         android:max="500"
-        android:progress="500" />
+        android:progress="275" />
 
 </LinearLayout>
 

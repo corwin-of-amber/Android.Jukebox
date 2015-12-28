@@ -520,7 +520,9 @@ public abstract class NanoHTTPD {
         private OutputStream fstream;
 
         public DefaultTempFile(String tempdir) throws IOException {
-            file = File.createTempFile("NanoHTTPD-", "", new File(tempdir));
+            File dir = new File(tempdir);
+            dir.mkdirs();
+            file = File.createTempFile("NanoHTTPD-", "", dir);
             fstream = new FileOutputStream(file);
         }
 

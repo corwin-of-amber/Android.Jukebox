@@ -6,6 +6,9 @@
         android:checkable="true"
         android:orderInCategory="100" app:showAsAction="never" />
 
+    <item android:id="@+id/action_folder" android:title="Select Folder"
+        app:showAsAction="never" />
+
     <item android:id="@+id/action_rescan" android:title="Rescan Media"
         android:orderInCategory="100" app:showAsAction="never" />
     <item android:id="@+id/action_clear" android:title="Clear Media"
