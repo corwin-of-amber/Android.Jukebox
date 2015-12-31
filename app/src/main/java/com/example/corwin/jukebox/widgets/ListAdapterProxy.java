@@ -3,6 +3,7 @@ package com.example.corwin.jukebox.widgets;
 import android.database.DataSetObserver;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.BaseAdapter;
 import android.widget.ListAdapter;
 
 /**

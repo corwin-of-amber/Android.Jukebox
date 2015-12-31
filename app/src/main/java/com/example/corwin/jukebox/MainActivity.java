@@ -17,7 +17,6 @@ import android.graphics.drawable.Drawable;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.media.MediaScannerConnection;
-import android.media.audiofx.LoudnessEnhancer;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
@@ -26,7 +25,6 @@ import android.os.Looper;
 import android.provider.MediaStore;
 import android.support.v7.app.ActionBarActivity;
 import android.os.Bundle;
-import android.util.Log;
 import android.view.DragEvent;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -35,6 +33,7 @@ import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView;
+import android.widget.BaseAdapter;
 import android.widget.CheckBox;
 import android.widget.CursorAdapter;
 import android.widget.ImageView;
@@ -58,6 +57,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -108,8 +108,12 @@ public class MainActivity extends ActionBarActivity
                         if (honeycomb) v.setAlpha(0.5f);
                         break;
                     case MotionEvent.ACTION_UP:
-                        if (event.getY() < 0 && event.getX() > 0 && event.getX() < v.getWidth())
-                            stop();
+                        if (knobAction == KNOB_ACTION_CONTROLS) {
+                            if (event.getY() < 0 && event.getX() > event.getY() && v.getWidth() - event.getX() > event.getY())
+                                stop();
+                            else if (event.getX() > v.getWidth() && event.getX() - v.getWidth() > event.getY() - v.getHeight() && v.getWidth() - event.getX() < event.getY())
+                                playNext();
+                        }
                         later(300, new Runnable() {
                             @TargetApi(11)
                             @Override
@@ -122,6 +126,10 @@ public class MainActivity extends ActionBarActivity
                         if (event.getY() < 0 && event.getX() > event.getY() && v.getWidth() - event.getX() > event.getY()) {
                             knobAction = KNOB_ACTION_CONTROLS;
                             knob.setImageResource(R.drawable.knob_stopped);
+                        }
+                        else if (event.getX() > v.getWidth() && event.getX() - v.getWidth() > event.getY() - v.getHeight() && v.getWidth() - event.getX() < event.getY()) {
+                            knobAction = KNOB_ACTION_CONTROLS;
+                            knob.setImageResource(R.drawable.knob_forward);
                         }
                         else {
                             // Restore image
@@ -166,6 +174,14 @@ public class MainActivity extends ActionBarActivity
                 playUri(getTrackUri(c));
             }
         });
+        list.setOnItemLongClickListener(new AdapterView.OnItemLongClickListener() {
+            @Override
+            public boolean onItemLongClick(AdapterView<?> parent, View view, int position, long id) {
+                Cursor c = (Cursor) parent.getItemAtPosition(position);
+                promptTrackOptions(c);
+                return false;
+            }
+        });
 
         final ListView artists = (ListView) findViewById(R.id.artists);
         final ListView albums = (ListView) findViewById(R.id.albums);
@@ -178,20 +194,27 @@ public class MainActivity extends ActionBarActivity
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
                 HashMap<String, String> c = (HashMap<String, String>) parent.getItemAtPosition(position);
                 String artist = c.get("name");
-                if (loadedArtist != null && loadedArtist.equals(artist)) artist = null;
+                if (loadedArtist != null && loadedArtist.equals(artist)) {
+                    artist = null;
+                }
                 loadMediaTracks(artist, null);
                 loadMediaAlbums(artist);
             }
         });
+        artists.setSelector(R.color.selectedItem);
 
         albums.setOnItemClickListener(new AdapterView.OnItemClickListener() {
             @Override
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
                 HashMap<String,String> c = (HashMap<String,String>) parent.getItemAtPosition(position);
                 String album = c.get("name");
+                if (loadedAlbum != null && loadedArtist.equals(album)) {
+                    album = null;
+                }
                 loadMediaTracks(null, album);
             }
         });
+        albums.setSelector(R.color.selectedItem);
 
         SeekBar volume = (SeekBar) findViewById(R.id.volume);
         setVolume(volume.getProgress(), volume.getMax());
@@ -275,6 +298,7 @@ public class MainActivity extends ActionBarActivity
             public void onLayoutChange(View v, int left, int top, int right, int bottom, int oldLeft, int oldTop, int oldRight, int oldBottom) {
                 Geom g = getGeom(pane);
                 knob.setTranslationY(g.bottom - knob.getHeight() / 2);
+                knobCenterFrame();
             }
         });
         artists.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
@@ -282,6 +306,7 @@ public class MainActivity extends ActionBarActivity
             public void onLayoutChange(View v, int left, int top, int right, int bottom, int oldLeft, int oldTop, int oldRight, int oldBottom) {
                 Geom g = getGeom(artists);
                 knob.setTranslationX(g.right + 3 - knob.getWidth() / 2);
+                knobCenterFrame();
             }
         });
 
@@ -399,6 +424,16 @@ public class MainActivity extends ActionBarActivity
         knobShadow = new KnobDragShadowBuilder(knob);
         knob.startDrag(dragData, knobShadow, null, 0);
         knobAction = action;
+    }
+
+    @TargetApi(11)
+    void knobCenterFrame() {
+        View knob = findViewById(R.id.knob);
+        View frame = findViewById(R.id.knob_frame);
+        float deltaX = frame.getWidth() - knob.getWidth();
+        float deltaY = frame.getHeight() - knob.getHeight();
+        frame.setTranslationX(knob.getTranslationX() - deltaX / 2);
+        frame.setTranslationY(knob.getTranslationY() - deltaY / 2);
     }
 
     @Override
@@ -702,7 +737,6 @@ public class MainActivity extends ActionBarActivity
                 //new SimpleCursorAdapter(this, R.layout.simple_item, c, columns, views, 0),  // >= v11
                 new SimpleCursorAdapter(this, R.layout.simple_item, c, columns, views),  // <= v10
                 sizer));
-
         loadedArtist = byArtist;
         loadedAlbum = byAlbum;
     }
@@ -739,6 +773,7 @@ public class MainActivity extends ActionBarActivity
         String[] proj = {column};
         Cursor c = resolver.query(table, proj, where,
                 args == null ? null : args.toArray(new String[args.size()]), orderBy);
+        if (c == null) return new String[0];
         return cursorToArray(c, 0, new LinkedHashSet<String>(c.getCount()));
     }
 
@@ -747,6 +782,7 @@ public class MainActivity extends ActionBarActivity
         String[] proj = {column0, column1};
         Cursor c = resolver.query(table, proj, where,
                 args == null ? null : args.toArray(new String[args.size()]), orderBy);
+        if (c == null) return new String[0];
         return cursorToArray(c, 0, 1, new LinkedHashSet<String>(c.getCount()));
     }
 
@@ -765,6 +801,7 @@ public class MainActivity extends ActionBarActivity
         String[] proj = {column};
         Cursor c = resolver.query(table, proj, where,
                 args == null ? null : args.toArray(new String[args.size()]), null);
+        if (c == null) return new String[0];
         return cursorToArray(c, 0, new HashSet<String>(c.getCount()));
     }
 
@@ -773,6 +810,7 @@ public class MainActivity extends ActionBarActivity
         String[] proj = {column0, column1};
         Cursor c = resolver.query(table, proj, where,
                 args == null ? null : args.toArray(new String[args.size()]), null);
+        if (c == null) return new String[0];
         return cursorToArray(c, 0, 1, new HashSet<String>(c.getCount()));
     }
 
@@ -825,6 +863,16 @@ public class MainActivity extends ActionBarActivity
         return c.getInt(c.getColumnIndex(MediaStore.Audio.Media._ID));
     }
 
+    private String getTrackDescription(Cursor c) {
+        return getTrackTitle(c) + " / " + getTrackArtist(c);
+    }
+    private String getTrackTitle(Cursor c) {
+        return c.getString(c.getColumnIndex(MediaStore.Audio.Media.TITLE));
+    }
+    private String getTrackArtist(Cursor c) {
+        return c.getString(c.getColumnIndex(MediaStore.Audio.Media.ARTIST));
+    }
+
     private Uri getTrackUri(int id) {
         ContentResolver resolver = getContentResolver();
 
@@ -846,6 +894,12 @@ public class MainActivity extends ActionBarActivity
     }
     private Uri getTrackUri(Cursor c, int column) {
         return Uri.fromFile(new File(c.getString(column)));
+    }
+    private File getTrackFile(Cursor c) {
+        return getTrackFile(c, c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA));
+    }
+    private File getTrackFile(Cursor c, int column) {
+        return new File(c.getString(column));
     }
 
     private Cursor findTrackById(int id) {
@@ -934,8 +988,6 @@ public class MainActivity extends ActionBarActivity
         mediaPlayer.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
             @Override
             public void onCompletion(MediaPlayer mp) {
-                TextView text = (TextView) findViewById(R.id.text);
-                text.setText("Time = " + System.currentTimeMillis()/1000);
                 playNext();
             }
         });
@@ -1125,9 +1177,6 @@ public class MainActivity extends ActionBarActivity
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        // Handle action bar item clicks here. The action bar will
-        // automatically handle clicks on the Home/Up button, so long
-        // as you specify a parent activity in AndroidManifest.xml.
         int id = item.getItemId();
 
         //noinspection SimplifiableIfStatement
@@ -1153,25 +1202,42 @@ public class MainActivity extends ActionBarActivity
     private void promptSelectFolder() {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
 
-        final String[] paths = new String[]
-                {"/mnt/sdcard/Music", "/mnt/external_sd/Music", "Other..."};
+        Set<String> pathList = new LinkedHashSet<>();
+        pathList.add(new File(Environment.getExternalStorageDirectory(), "Music").getAbsolutePath());
+        pathList.add("/mnt/sdcard/Music");
+        pathList.add("/mnt/external_sd/Music");
+        pathList.add("Other...");
+
+        final String[] paths = pathList.toArray(new String[pathList.size()]);
 
         builder.setItems(paths, new DialogInterface.OnClickListener() {
             @Override
             public void onClick(DialogInterface dialog, int which) {
-                dialog.dismiss();
-                String picked = paths[which];
-                if (new File(picked).isDirectory()) {
-                    SharedPreferences.Editor editor = prefs.edit();
-                    editor.putString("mediaRoot", paths[which]);
-                    editor.commit();
-                }
-                else
-                    Toast.makeText(MainActivity.this, "Directory '" + picked + "' does not exist.",
-                            Toast.LENGTH_LONG);
+                setMediaRoot(new File(paths[which]));
             }
         })
-            .setTitle("Current: " + getMediaRoot()); //"Set Download Folder");
+        .setTitle("Current: " + getMediaRoot()); //"Set Download Folder");
+
+        AlertDialog dialog = builder.create();
+        dialog.show();
+    }
+
+    private void promptTrackOptions(final Cursor c) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+
+        final String[] options = new String[] { "Delete", "Info..." }; // indexes must match switch
+
+        builder.setItems(options, new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                switch (which) {
+                    case 0: // Delete
+                        drop(getTrackFile(c)); break;
+                    case 1: // Info...
+                }
+            }
+        })
+        .setTitle(getTrackDescription(c));
 
         AlertDialog dialog = builder.create();
         dialog.show();
@@ -1198,6 +1264,15 @@ public class MainActivity extends ActionBarActivity
                     paths.toArray(new String[paths.size()]),
                     mimes, this);
         }
+    }
+
+    private void scanSingleFile(File mediaFile) {
+        String[] paths = {mediaFile.getAbsolutePath()};
+        String[] mimes = null;
+        scanProgress = 0;
+        scanTotal = paths.length;
+        lastFileToScan = paths[paths.length - 1];
+        MediaScannerConnection.scanFile(this, paths, mimes, this);
     }
 
     @Override
@@ -1230,12 +1305,14 @@ public class MainActivity extends ActionBarActivity
             throw new IOException("File does not exist: '" + payloadFile.getAbsolutePath() + "'");
         Files.move(payloadFile, targetFile);
         // Scan new file
-        String[] paths = {targetFile.getAbsolutePath()};
-        String[] mimes = null;
-        scanProgress = 0;
-        scanTotal = paths.length;
-        lastFileToScan = paths[paths.length - 1];
-        MediaScannerConnection.scanFile(this, paths, mimes, this);
+        scanSingleFile(targetFile);
+    }
+
+    private void drop(File mediaFile) {
+        if (mediaFile.delete()) {
+            // Scan should remove file from library?
+            scanSingleFile(mediaFile);
+        }
     }
 
     // Storage sub-part
@@ -1246,6 +1323,17 @@ public class MainActivity extends ActionBarActivity
             return new File(mediaRoot);
         else
             return new File(Environment.getExternalStorageDirectory(), "Music");
+    }
+
+    private void setMediaRoot(File dir) {
+        if (dir.isDirectory()) {
+            SharedPreferences.Editor editor = prefs.edit();
+            editor.putString("mediaRoot", dir.getAbsolutePath());
+            editor.apply();
+        }
+        else
+            Toast.makeText(MainActivity.this, "Directory '" + dir.getPath() + "' does not exist.",
+                    Toast.LENGTH_LONG).show();
     }
 
     private List<String> findAllFiles(File dir) {
@@ -1326,8 +1414,11 @@ public class MainActivity extends ActionBarActivity
     }
 
     private void sleepIndicator(String symbol) {
-        TextView indicator = (TextView) findViewById(R.id.sleepIndicator);
-        indicator.setText(symbol);
+        ImageView indicator = (ImageView) findViewById(R.id.sleepIndicator);
+        switch (symbol) {
+            case "⧖":  indicator.setImageResource(R.drawable.hourglass); break;
+            case "⇣":  indicator.setImageResource(R.drawable.downarrow); break;
+        }
     }
 
     private void later(int timeoutMillis, Runnable action) {
