@@ -1,0 +1,28 @@
+.hi { 
+  background-color: rgba(0,0,255,0.2) !important; 
+}
+
+#picker {
+  display: flex;
+  align-items: flex-start;
+}
+
+ul { 
+  border: 1px solid green; 
+  min-width: 150px; 
+  padding-left: 0px;
+  display: inline-block;
+}
+
+ul li {
+  padding-left: 5px;
+  padding-right: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  list-style-position: none;
+}
+
+ul li:nth-child(even) { 
+  background: rgba(0,0,0,0.08); 
+}
+
