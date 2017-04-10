@@ -14,6 +14,7 @@ app = angular.module "app" []
 
     $scope.volume = 275
     $scope.max-volume = 500
+    $scope.volume-enabled = true
 
     $scope.base-url = BASE_URL
 
@@ -43,17 +44,26 @@ app = angular.module "app" []
         success: (data) !->
           <- $scope.$apply
           $scope.tracks = data
-          #$scope.albums = project data, 'album'
-          #$scope.artists = project data, 'artist', 2
 
-    $scope.reload-tracks!
+    $scope.reload-volume = ->
+      $scope.volume-enabled = false
+      $.get "#{$scope.base-url}/vol" .done (data) ->
+        console.log "volume = #{data}"
+        if data?
+          $scope.$apply -> $scope.volume = $scope.max-volume * (+data)
+      .always ->
+        $scope.volume-enabled = true
+
+    $scope.reload = ->
+      $scope.reload-tracks!
+      $scope.reload-volume!
+
+    $scope.reload!
 
     $scope.start-upload = -> upload @base-url, @~reload-tracks
 
-    $.get "#{$scope.base-url}/vol" .done (data) ->
-      if data?
-        $scope.$apply -> $scope.volume = $scope.max-volume * (+data)
-      $scope.$watch \volume (volume) ->
+    $scope.$watch \volume (volume) ->
+      if $scope.volume-enabled
         max = $scope.max-volume
         $.get "#{$scope.base-url}/vol?#volume/#max"
 
@@ -100,3 +110,9 @@ upload = (base-url, reload-cb) ->
       console.log "Upload failed."
       console.log "Reason: #status - #error"
 
+$ ->
+  $(document).on 'paste' ->
+    console.log it
+    text = it.originalEvent.clipboardData.getData("text/plain")
+    if text? && /^(https?:[/][/])?(\w*[.])?youtube/.exec(text)
+      youtube-play(text)

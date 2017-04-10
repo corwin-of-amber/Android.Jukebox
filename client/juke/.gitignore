@@ -1,4 +1,6 @@
 /juke.html
 /juke.app
-/juke.ls.js
+/*.ls.js
 /node_modules
+/bower_components
+.*.sw?

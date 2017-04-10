@@ -4,13 +4,14 @@
 <%= angular />
 
 <script src="juke.ls.js"></script>
+<script src="youtube.ls.js"></script>
 
 <link rel="stylesheet" type="text/css" href="juke.css">
 
 <body ng-app="app"
   ng-controller="Ctrl">
   <div><input ng-model="baseUrl" list="recentUrls">
-  <button id="reload" ng-click="reloadTracks()">Reload</button>
+  <button id="reload" ng-click="reload()">Reload</button>
   </div>
   <div id="picker">
   <ul>

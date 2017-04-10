@@ -1,0 +1,14 @@
+{
+  "name": "juke",
+  "description": "",
+  "main": "juke.html",
+  "authors": [
+    "corwin <corwin.amber@gmail.com>"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/corwin-of-amber/Android.Jukebox",
+  "dependencies": {
+    "jquery": "^3.2.1",
+    "angular": "^1.6.4"
+  }
+}
