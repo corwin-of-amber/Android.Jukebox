@@ -7,3 +7,13 @@ convert -size 72x72 canvas:none -fill black -draw "$triangle_up" -rotate 90 $out
 convert -size 72x72 canvas:none -fill black -draw "$triangle_up_squash" -draw "$block_below" -rotate 90 $outdir/knob_paused.png
 convert -size 72x72 canvas:none -fill black -draw "$triangle_up_squash" -distort AffineProjection '1,0,0,1,0,25' -draw \
 "$triangle_up_squash" -distort AffineProjection '1,0,0,1,0,-5' -rotate 90 $outdir/knob_forward.png
+
+outdir=app/src/main/res/drawable-sw600dp-hdpi
+scale='-filter Triangle -resize 200%'
+convert -size 72x72 canvas:none -fill black -draw "$triangle_up" $scale $outdir/knob_stopped.png
+convert -size 72x72 canvas:none -fill black -draw "$triangle_up" -rotate 90 $scale $outdir/knob_playing.png
+convert -size 72x72 canvas:none -fill black -draw "$triangle_up_squash" -draw "$block_below" -rotate 90 $scale $outdir/knob_paused.png
+convert -size 72x72 canvas:none -fill black -draw "$triangle_up_squash" -distort AffineProjection '1,0,0,1,0,25' -draw \
+"$triangle_up_squash" -distort AffineProjection '1,0,0,1,0,-5' -rotate 90 $scale $outdir/knob_forward.png
+
+

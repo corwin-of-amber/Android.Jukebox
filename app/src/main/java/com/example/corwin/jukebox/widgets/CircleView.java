@@ -43,18 +43,8 @@ public class CircleView extends View {
         vto.addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
             @Override
             public void onGlobalLayout() {
-                removeOnGlobalLayoutListener(this);
                 size = getMeasuredWidth() / 2;
             }
         });
-    }
-
-    @TargetApi(Build.VERSION_CODES.JELLY_BEAN)
-    private void removeOnGlobalLayoutListener(ViewTreeObserver.OnGlobalLayoutListener listener) {
-        if (Build.VERSION.SDK_INT < 16) {
-            getViewTreeObserver().removeGlobalOnLayoutListener(listener);
-        } else {
-            getViewTreeObserver().removeOnGlobalLayoutListener(listener);
-        }
     }
 }

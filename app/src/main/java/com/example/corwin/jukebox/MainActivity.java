@@ -25,6 +25,7 @@ import android.os.Looper;
 import android.provider.MediaStore;
 import android.support.v7.app.ActionBarActivity;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.DragEvent;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -36,6 +37,7 @@ import android.widget.AdapterView;
 import android.widget.BaseAdapter;
 import android.widget.CheckBox;
 import android.widget.CursorAdapter;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.ListAdapter;
 import android.widget.ListView;
@@ -52,6 +54,10 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.net.SocketException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -164,11 +170,26 @@ public class MainActivity extends ActionBarActivity
                 return false;
             }
         });
+        if (honeycomb) knobConfigureFrame();
+
+        View text = findViewById(R.id.text);
+        text.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (playlist != null && playlist.nowPlaying >= 0 &&
+                        playlist.nowPlaying < playlist.tracks.size()) {
+                    Cursor c = findTrackById(playlist.tracks.get(playlist.nowPlaying).id);
+                    if (c != null && c.moveToNext())
+                        promptTrackOptions(c);
+                }
+            }
+        });
 
         final ListView list = (ListView) findViewById(R.id.list);
         list.setOnItemClickListener(new AdapterView.OnItemClickListener() {
             @Override
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                if (isResizing) return ;
                 Cursor c = (Cursor) parent.getItemAtPosition(position);
                 playlist = null;
                 playUri(getTrackUri(c));
@@ -177,9 +198,10 @@ public class MainActivity extends ActionBarActivity
         list.setOnItemLongClickListener(new AdapterView.OnItemLongClickListener() {
             @Override
             public boolean onItemLongClick(AdapterView<?> parent, View view, int position, long id) {
+                if (isResizing) return false;
                 Cursor c = (Cursor) parent.getItemAtPosition(position);
                 promptTrackOptions(c);
-                return false;
+                return true;
             }
         });
 
@@ -192,6 +214,7 @@ public class MainActivity extends ActionBarActivity
         artists.setOnItemClickListener(new AdapterView.OnItemClickListener() {
             @Override
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                if (isResizing) return ;
                 HashMap<String, String> c = (HashMap<String, String>) parent.getItemAtPosition(position);
                 String artist = c.get("name");
                 if (loadedArtist != null && loadedArtist.equals(artist)) {
@@ -206,9 +229,10 @@ public class MainActivity extends ActionBarActivity
         albums.setOnItemClickListener(new AdapterView.OnItemClickListener() {
             @Override
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                if (isResizing) return ;
                 HashMap<String,String> c = (HashMap<String,String>) parent.getItemAtPosition(position);
                 String album = c.get("name");
-                if (loadedAlbum != null && loadedArtist.equals(album)) {
+                if (loadedAlbum != null && loadedAlbum.equals(album)) {
                     album = null;
                 }
                 loadMediaTracks(null, album);
@@ -240,6 +264,24 @@ public class MainActivity extends ActionBarActivity
 
         sgd = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
             @Override
+            public boolean onScaleBegin(ScaleGestureDetector detector) {
+                isResizing = true;
+                return super.onScaleBegin(detector);
+            }
+
+            @Override
+            public void onScaleEnd(ScaleGestureDetector detector) {
+                // delay to prevent click from happening immediately
+                later(500, new Runnable() {
+                    @Override
+                    public void run() {
+                        isResizing = false;
+                    }
+                });
+                super.onScaleEnd(detector);
+            }
+
+            @Override
             public boolean onScale(ScaleGestureDetector detector) {
                 float scale = detector.getScaleFactor();
                 float delta = (scale < 0.9) ? -1f : (scale > 1.1) ? +1f : 0;
@@ -268,6 +310,7 @@ public class MainActivity extends ActionBarActivity
     }
 
     private ScaleGestureDetector sgd;
+    private boolean isResizing = false;
 
     static class Geom { int left; int top; int right; int bottom; }
 
@@ -436,6 +479,20 @@ public class MainActivity extends ActionBarActivity
         frame.setTranslationY(knob.getTranslationY() - deltaY / 2);
     }
 
+    @TargetApi(11)
+    void knobConfigureFrame() {
+        final View knob = findViewById(R.id.knob);
+        final View frame = findViewById(R.id.knob_frame);
+        knob.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            @Override
+            public void onLayoutChange(View view, int i, int i1, int i2, int i3, int i4, int i5, int i6, int i7) {
+                frame.setLayoutParams(
+                        new FrameLayout.LayoutParams(knob.getWidth(), knob.getHeight()));
+                knobCenterFrame();
+            }
+        });
+    }
+
     @Override
     protected void onDestroy() {
         stop(); stopServer();
@@ -507,13 +564,14 @@ public class MainActivity extends ActionBarActivity
 
         private Response play(IHTTPSession session) throws Exception {
             if (Method.POST.equals(session.getMethod())) {
+                // Actually not supposed to happen?
                 Map<String, String> files = new HashMap<>();
                 session.parseBody(files);
             }
 
             String q = session.getQueryParameterString();
             try {
-                final Playlist playlist = playlistParseIds(q);
+                final Playlist playlist = playlistParse(q);
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() { MainActivity.this.play(playlist); }
@@ -592,6 +650,16 @@ public class MainActivity extends ActionBarActivity
                     else return new Response(Response.Status.BAD_REQUEST, "text/plain",
                             "bad request; received " + payloadPaths.length +
                             " files, but " + payloadNames + " names." );
+                    // Play first file, if requested
+                    Map<String, String> params = session.getParms();
+                    if (params.get("play") != null) {
+                        final Uri uri = Uri.fromFile(new File(getMediaRoot(), payloadNames[0]));
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() { playlist = null; playUri(uri /*, "192.168.0.3"*/);
+                            }
+                        });
+                    }
                 }
                 return new Response(b.toString());
             }
@@ -942,6 +1010,18 @@ public class MainActivity extends ActionBarActivity
 
     /**
      * Parses a playlist definition.
+     * @param playlistText either a comma-separated list of track id's or an http(s) URL
+     * @return
+     */
+    private Playlist playlistParse(String playlistText) {
+        if (playlistText.startsWith("http://") || playlistText.startsWith("https://"))
+            return playlistParseUri(playlistText);
+        else
+            return playlistParseIds(playlistText);
+    }
+
+    /**
+     * Parses a playlist definition.
      * @param ids comma-separated track id's
      * @return
      */
@@ -965,6 +1045,16 @@ public class MainActivity extends ActionBarActivity
         return playlist;
     }
 
+    private Playlist playlistParseUri(String uri) {
+        Playlist playlist = new Playlist();
+        playlist.tracks = new ArrayList<Playlist.Track>();
+        Playlist.Track entry = new Playlist.Track();
+        entry.id = 0;
+        entry.uri = Uri.parse(uri);
+        playlist.tracks.add(entry);
+        return playlist;
+    }
+
     // ----------------
     // MediaPlayer part
     // ----------------
@@ -976,14 +1066,17 @@ public class MainActivity extends ActionBarActivity
     float volumeLevel = 1.0f;
     float volumeValue = 1.0f;
 
-    private void playUri(Uri uri) {
+    private void playUri(Uri uri, String syncHost) {
         if (mediaPlayer != null) {
             mediaPlayer.release();
         }
+        syncStop();
 
         mediaPlayer = new MediaPlayer();
         isPaused = false;
         isStopped = false;
+
+        if (syncHost != null) syncStart(syncHost);
 
         mediaPlayer.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
             @Override
@@ -1011,6 +1104,10 @@ public class MainActivity extends ActionBarActivity
         catch (IOException e) {
             Toast.makeText(this, "Failed to open " + uri, Toast.LENGTH_LONG).show();
         }
+    }
+
+    private void playUri(Uri uri) {
+        playUri(uri, null);
     }
 
     private void pause() {
@@ -1044,6 +1141,7 @@ public class MainActivity extends ActionBarActivity
         mediaProgress = null;
         isPaused = false;
         isStopped = true;
+        syncStop();
         // Set knob
         ImageView knob = (ImageView) findViewById(R.id.knob);
         knob.setImageResource(R.drawable.knob_stopped);
@@ -1122,6 +1220,7 @@ public class MainActivity extends ActionBarActivity
             private int duration = mediaPlayer.getDuration();
             @Override
             public void run() {
+                if (audioSync != null) audioSync.heartbeat();
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
@@ -1131,7 +1230,27 @@ public class MainActivity extends ActionBarActivity
                 });
             }
         };
-        mediaTimer.schedule(mediaProgress, 0, 125);
+        mediaTimer.schedule(mediaProgress, 0, 750);
+
+        if (audioSync != null) audioSync.handshake();
+    }
+
+    // --------------
+    // AudioSync part
+    // --------------
+
+    AudioSync audioSync = null;
+
+    private void syncStart(String host) {
+        try {
+            audioSync = new AudioSync(host, 3333, mediaPlayer);
+        }
+        catch (Exception e) { Log.e("AudioSync", "not syncing", e); }
+    }
+
+    private void syncStop() {
+        if (audioSync != null) audioSync.stop();
+        audioSync = null;
     }
 
     // -----------------
