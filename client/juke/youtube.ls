@@ -5,7 +5,7 @@ ffmpeg = require('fluent-ffmpeg')
 MemoryStream = require('memory-stream')
 stream = require('stream')
 
-youtube-play = (url) ->
+youtube-play = (url, juke-url) ->
     fmts = []
     <- ytdl.getInfo(url).then
     for fmt in it.formats
@@ -19,6 +19,7 @@ youtube-play = (url) ->
     try
       #s = fs.createWriteStream("/tmp/hat.mp3")
       s = youtube-play.stream = new stream.PassThrough
+      <- configure-ffmpeg!then
       ytdl(url, {format: fmt})
         ffmpeg(..).audioCodec('libmp3lame').format("mp3")
         .on 'start' -> console.log '[ffmpeg] start'
@@ -28,7 +29,8 @@ youtube-play = (url) ->
         #    console.log 'data', @
         .pipe(s, {end: true})
 
-      $.ajax 'http://192.168.0.7:2222/play?http://192.168.0.3:8000/hat.mp3'
+      data <-! $.post "#{juke-url}/play", "http://#{HOST}:#{PORT}/hat.mp3"
+      console.log "play: " + data
 
           #..on 'progress' !->
           #  console.log('Processing: ')# + it.percent + '% done')
@@ -36,6 +38,19 @@ youtube-play = (url) ->
     catch e
       console.error e
 
+
+configure-ffmpeg = ->
+  new Promise (resolve, reject) ->
+    err, path <- (new ffmpeg) ._getFfmpegPath
+    if path then resolve!
+    # Try to find ffmpeg using mdfind
+    child_process = require 'child_process'
+    for line in child_process.spawnSync('mdfind', ['-name', 'ffmpeg'], {encoding: 'utf-8'}).stdout.split("\n")
+      if /[/]ffmpeg$/.exec(line) && fs.statSync(line).isFile()
+        console.log "[ffmpeg] path: #{line}"
+        ffmpeg.setFfmpegPath line
+        resolve!
+    reject err ? new Error "ffmpeg not found"
 
 
 get-my-ip = ->
@@ -51,8 +66,6 @@ get-my-ip = ->
   addresses[0] ? 'localhost'
 
 
-#youtube-play URL
-
 #express = require('express')
 #app = express()
 http = require 'http'
@@ -60,14 +73,15 @@ server = http.createServer()
 
 
 PORT = 8000
+HOST = get-my-ip!
 
 server.on 'request' (request, response) ->
   #fs.createReadStream("/tmp/link.html").pipe(response)
   youtube-play.stream.pipe(response)
 
 server.listen PORT, ->
-  console.log "Express server listening on http://#{get-my-ip!}:#{server.address!port}"
+  console.log "Express server listening on http://#{HOST}:#{server.address!port}"
 
 window.addEventListener 'unload' -> server.close!
 
-export ytdl, server, youtube-play, URL
+export ytdl, server, youtube-play, configure-ffmpeg

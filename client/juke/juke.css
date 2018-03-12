@@ -7,6 +7,11 @@
   align-items: flex-start;
 }
 
+#picker ul {
+  max-height: 300px;
+  overflow: auto;
+}
+
 ul { 
   border: 1px solid green; 
   min-width: 150px; 

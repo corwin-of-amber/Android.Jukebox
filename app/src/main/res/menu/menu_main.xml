@@ -14,4 +14,10 @@
         android:orderInCategory="100" app:showAsAction="never" />
     <item android:id="@+id/action_clear" android:title="Clear Media"
         android:orderInCategory="100" app:showAsAction="never" />
+    <item
+        android:id="@+id/action_bluetooth"
+        android:orderInCategory="101"
+        android:title="Bluetooth Enabled"
+        android:checkable="true"
+        />
 </menu>

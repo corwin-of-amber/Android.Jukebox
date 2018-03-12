@@ -1,5 +1,5 @@
 #BASE_URL = "http://localhost:2222"
-BASE_URL = "http://192.168.0.7:2222"
+BASE_URL = "http://10.0.0.2:2222"
 
 COMPILATIONS =
   * "Reign Vol. 1 (Original Soundtrack)"
@@ -26,7 +26,7 @@ app = angular.module "app" []
       console.log "play: " + data
     $scope.stop = ->
       data <-! $.post @base-url + "/stop"
-      console.log data
+      console.log "stop: " + data
 
     $scope.cu = (d) ->
       {}
@@ -55,6 +55,7 @@ app = angular.module "app" []
         $scope.volume-enabled = true
 
     $scope.reload = ->
+      app.juke-url = $scope.base-url
       $scope.reload-tracks!
       $scope.reload-volume!
 
@@ -98,7 +99,7 @@ upload = (base-url, reload-cb) ->
       if xhr.upload
         acc = 1
         xhr.upload.addEventListener \progress (e) ->
-          pc = (Math.round 100 * acc * e.loaded / e.total) / acc
+          pc = Math.round(100 * acc * e.loaded / e.total) / acc
           if pc < 1 then acc := 10
           $ \#percentage .text "#pc%"
       xhr
@@ -112,7 +113,14 @@ upload = (base-url, reload-cb) ->
 
 $ ->
   $(document).on 'paste' ->
-    console.log it
     text = it.originalEvent.clipboardData.getData("text/plain")
-    if text? && /^(https?:[/][/])?(\w*[.])?youtube/.exec(text)
-      youtube-play(text)
+    if text?
+      # strip google prefix
+      if /^(https?:[/][/])?www[.]google[.]com[/]url/.exec(text)
+        text = new URL(text).searchParams.get('url') ? text
+      # see if text is a youtube url
+      if /^(https?:[/][/])?(\w*[.])?youtu[.]?be/.exec(text)
+        youtube-play(text, app.juke-url).catch -> console.error it
+
+
+export app
