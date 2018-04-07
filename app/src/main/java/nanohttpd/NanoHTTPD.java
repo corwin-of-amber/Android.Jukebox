@@ -523,6 +523,7 @@ public abstract class NanoHTTPD {
             File dir = new File(tempdir);
             dir.mkdirs();
             file = File.createTempFile("NanoHTTPD-", "", dir);
+            Log.i("jukebox", "tempfile: " + file.getAbsolutePath());
             fstream = new FileOutputStream(file);
         }
 

@@ -1,13 +1,20 @@
 package com.example.corwin.jukebox;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.AlertDialog;
+import android.bluetooth.BluetoothAdapter;
+import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.ClipDescription;
+import android.content.ComponentName;
 import android.content.ContentResolver;
+import android.content.Context;
 import android.content.DialogInterface;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -21,11 +28,17 @@ import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.IBinder;
 import android.os.Looper;
+import android.os.Message;
+import android.os.Messenger;
+import android.os.RemoteException;
 import android.provider.MediaStore;
 import android.support.v7.app.ActionBarActivity;
 import android.os.Bundle;
 import android.util.Log;
+import android.util.SparseBooleanArray;
 import android.view.DragEvent;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -37,7 +50,6 @@ import android.widget.AdapterView;
 import android.widget.BaseAdapter;
 import android.widget.CheckBox;
 import android.widget.CursorAdapter;
-import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.ListAdapter;
 import android.widget.ListView;
@@ -54,16 +66,11 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.DatagramPacket;
-import java.net.DatagramSocket;
-import java.net.InetAddress;
-import java.net.SocketException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -74,6 +81,8 @@ import nanohttpd.NanoHTTPD;
 import nanohttpd.NanoHTTPD.*;
 import com.example.corwin.jukebox.widgets.ListAdapterProxy;
 import com.example.corwin.jukebox.widgets.ListAdapterWithResize;
+
+import static android.content.Intent.ACTION_OPEN_DOCUMENT_TREE;
 
 
 public class MainActivity extends ActionBarActivity
@@ -90,6 +99,7 @@ public class MainActivity extends ActionBarActivity
     private SharedPreferences prefs = null;
 
 
+    @SuppressLint("ClickableViewAccessibility")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -101,6 +111,16 @@ public class MainActivity extends ActionBarActivity
 
         sizer = new ListAdapterWithResize.SizingMixin();
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+                    != PackageManager.PERMISSION_GRANTED) {
+            // TODO should defer loadMediaLibrary until after permissions request
+            Log.e("Jukebox", "Permission READ_EXTERNAL_STORAGE missing.");
+            requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
+                    11);
+        }
+
+        //if (savedInstanceState == null)
         loadMediaLibrary();
 
         final ImageView knob = (ImageView) findViewById(R.id.knob);
@@ -139,12 +159,14 @@ public class MainActivity extends ActionBarActivity
                         }
                         else {
                             // Restore image
+                            setKnob(playerState);
+                            /*
                             if (mediaPlayer != null && mediaPlayer.isPlaying())
                                 knob.setImageResource(R.drawable.knob_playing);
                             else if (mediaPlayer != null && isPaused || playlist != null && !isStopped)
                                 knob.setImageResource(R.drawable.knob_paused);
                             else
-                                knob.setImageResource(R.drawable.knob_stopped);
+                                knob.setImageResource(R.drawable.knob_stopped); */
                         }
                         break;
                 }
@@ -154,12 +176,12 @@ public class MainActivity extends ActionBarActivity
         knob.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if (mediaPlayer != null && mediaPlayer.isPlaying())
+                if (playerState == PlayerState.PLAY) //mediaPlayer != null && mediaPlayer.isPlaying())
                     pause();
-                else if (mediaPlayer != null && isPaused || playlist != null && !isStopped)
+                else if (playerState == PlayerState.PAUSE) //mediaPlayer != null && isPaused || playlist != null && !isStopped)
                     resume();
                 else
-                    play(playlistAll());
+                    play(playlist != null ? playlist : playlistAll());
             }
         });
         knob.setOnLongClickListener(new View.OnLongClickListener() {
@@ -293,10 +315,19 @@ public class MainActivity extends ActionBarActivity
             }
         });
 
+        musicServiceConnect();
+
         if (httpd == null)
             startServer();
         else
             httpd.withServlet(new Servlet());
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        if (loadedArtist != null) outState.putString("artist", loadedArtist);
+        if (loadedAlbum != null)  outState.putString("album", loadedAlbum);
+        super.onSaveInstanceState(outState);
     }
 
     @Override
@@ -329,6 +360,8 @@ public class MainActivity extends ActionBarActivity
     // Knob part
     // ---------
 
+    private int knobCenterX, knobCenterY, knobWidth, knobHeight;
+
     @TargetApi(11)
     void configureKnobDrag() {
         final View knob = findViewById(R.id.knob);
@@ -336,20 +369,19 @@ public class MainActivity extends ActionBarActivity
         // Center the knob initially
         final View pane = findViewById(R.id.filterPane);
         final ListView artists = (ListView) findViewById(R.id.artists);
+
         pane.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
             @Override
             public void onLayoutChange(View v, int left, int top, int right, int bottom, int oldLeft, int oldTop, int oldRight, int oldBottom) {
-                Geom g = getGeom(pane);
-                knob.setTranslationY(g.bottom - knob.getHeight() / 2);
-                knobCenterFrame();
+                knobCenterY = getGeom(v).bottom;
+                knobReposition();
             }
         });
         artists.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
             @Override
             public void onLayoutChange(View v, int left, int top, int right, int bottom, int oldLeft, int oldTop, int oldRight, int oldBottom) {
-                Geom g = getGeom(artists);
-                knob.setTranslationX(g.right + 3 - knob.getWidth() / 2);
-                knobCenterFrame();
+                knobCenterX = getGeom(v).right + 5;
+                knobReposition();
             }
         });
 
@@ -480,22 +512,33 @@ public class MainActivity extends ActionBarActivity
     }
 
     @TargetApi(11)
+    void knobReposition() {
+        final View knob = findViewById(R.id.knob);
+        knob.setTranslationX(knobCenterX - knobWidth / 2);
+        knob.setTranslationY(knobCenterY - knobHeight / 2);
+        knobCenterFrame();
+    }
+
+    @TargetApi(11)
     void knobConfigureFrame() {
         final View knob = findViewById(R.id.knob);
         final View frame = findViewById(R.id.knob_frame);
         knob.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
             @Override
             public void onLayoutChange(View view, int i, int i1, int i2, int i3, int i4, int i5, int i6, int i7) {
-                frame.setLayoutParams(
-                        new FrameLayout.LayoutParams(knob.getWidth(), knob.getHeight()));
-                knobCenterFrame();
+                // ** The following would cause an invalid call to View.requestLayout in CircleView
+                //frame.setLayoutParams(
+                //        new FrameLayout.LayoutParams(knob.getWidth(), knob.getHeight()));
+                knobHeight = knob.getHeight();
+                knobWidth = knob.getWidth();
+                knobReposition();
             }
         });
     }
 
     @Override
     protected void onDestroy() {
-        stop(); stopServer();
+        stopServer();
         super.onDestroy();
     }
 
@@ -649,7 +692,7 @@ public class MainActivity extends ActionBarActivity
                     }
                     else return new Response(Response.Status.BAD_REQUEST, "text/plain",
                             "bad request; received " + payloadPaths.length +
-                            " files, but " + payloadNames + " names." );
+                            " files, but " + payloadNames.length + " names." );
                     // Play first file, if requested
                     Map<String, String> params = session.getParms();
                     if (params.get("play") != null) {
@@ -687,6 +730,7 @@ public class MainActivity extends ActionBarActivity
         }
     }
 
+    @SuppressLint("StaticFieldLeak")
     void stopServer() {
         if (httpd != null) {
             new AsyncTask<Object, Object, Object>() {
@@ -720,17 +764,18 @@ public class MainActivity extends ActionBarActivity
 
     /**
      * Creates a JSON representation of the library.
-     * @return
      */
     private String exportMediaLibrary() throws JSONException {
         JSONArray a = new JSONArray();
         Cursor c = queryMediaTracks(null, null);
-        while (c.moveToNext()) {
-            JSONObject o = new JSONObject();
-            if (honeycomb) exportRecord(c, o);
-                      else exportRecord_api10(c, o);
-            a.put(o);
-        }
+        try {
+            while (c.moveToNext()) {
+                JSONObject o = new JSONObject();
+                if (honeycomb) exportRecord(c, o);
+                else exportRecord_api10(c, o);
+                a.put(o);
+            }
+        } finally { c.close(); }
         return a.toString();
     }
 
@@ -1059,50 +1104,82 @@ public class MainActivity extends ActionBarActivity
     // MediaPlayer part
     // ----------------
 
-    Timer mediaTimer = new Timer();
+    enum PlayerState { NONE, PLAY, PAUSE, STOP }
+
     TimerTask mediaProgress = null;
-    boolean isPaused = false;
-    boolean isStopped = true;
     float volumeLevel = 1.0f;
-    float volumeValue = 1.0f;
+
+    PlayerState playerState = PlayerState.NONE;
+
+    MusicService.Connection playerConn;
+    Messenger playerCallback = new Messenger(new Handler() {
+        @Override
+        public void handleMessage(Message msg) {
+            switch (msg.what) {
+                case MusicService.Msgs.PROGRESS:
+                    onMediaProgress(msg.arg1, msg.arg2); break;
+                case MusicService.Msgs.END:
+                    onMediaCompleted(); break;
+            }
+        }
+    });
+
+    /**
+     * Bind to the service holding the MediaPlayer.
+     * It is kept there so when the system destroys the Activity, the player state is not lost.
+     */
+    private void musicServiceConnect() {
+        playerConn = new MusicService.Connection() {
+            @Override
+            public void onServiceConnected(ComponentName componentName, IBinder service) {
+                super.onServiceConnected(componentName, service);
+                setVolume((int)(volumeLevel * 1000), 1000);
+            }
+        };
+        bindService(new Intent(this, MusicService.class),
+                playerConn, Context.BIND_AUTO_CREATE);
+    }
+
+    private void musicServiceSend(int what, int arg1, int arg2) {
+        if (playerConn != null) {
+            try {
+                playerConn.messenger.send(Message.obtain(null, what, arg1, arg2));
+            }
+            catch (RemoteException e) {
+                musicServiceError(e);
+            }
+        }
+    }
+
+    private void musicServiceError(RemoteException e) {
+        Toast.makeText(this, "Internal error; problem with music service; " + e.toString(), Toast.LENGTH_LONG).show();
+    }
+
+    private void setKnob(PlayerState newState) {
+        playerState = newState;
+        ImageView knob = (ImageView) findViewById(R.id.knob);
+        int image = 0;
+        switch (newState) {
+            case NONE:
+            case STOP:  image = R.drawable.knob_stopped; break;
+            case PLAY:  image = R.drawable.knob_playing; break;
+            case PAUSE: image = R.drawable.knob_paused;  break;
+        }
+        if (BuildConfig.DEBUG && image == 0) throw new AssertionError();
+        knob.setImageResource(image);
+    }
 
     private void playUri(Uri uri, String syncHost) {
-        if (mediaPlayer != null) {
-            mediaPlayer.release();
-        }
-        syncStop();
-
-        mediaPlayer = new MediaPlayer();
-        isPaused = false;
-        isStopped = false;
-
-        if (syncHost != null) syncStart(syncHost);
-
-        mediaPlayer.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
-            @Override
-            public void onCompletion(MediaPlayer mp) {
-                playNext();
-            }
-        });
-        mediaPlayer.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
-            @Override
-            public void onPrepared(MediaPlayer mp) {
-                monitorMediaProgress();
-            }
-        });
-
-        mediaPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
+        Message m = Message.obtain(null, MusicService.Msgs.PLAY);
+        Bundle b = new Bundle();
+        b.putParcelable("uri", uri);
+        m.setData(b);
+        m.replyTo = playerCallback;
         try {
-            mediaPlayer.setDataSource(getApplicationContext(), uri);
-            mediaPlayer.setVolume(volumeValue, volumeValue);
-            mediaPlayer.prepare();
-            mediaPlayer.start();
-            // Set knob
-            ImageView knob = (ImageView) findViewById(R.id.knob);
-            knob.setImageResource(R.drawable.knob_playing);
-        }
-        catch (IOException e) {
-            Toast.makeText(this, "Failed to open " + uri, Toast.LENGTH_LONG).show();
+            playerConn.messenger.send(m);
+            setKnob(PlayerState.PLAY);
+        } catch (RemoteException e) {
+            musicServiceError(e);
         }
     }
 
@@ -1111,30 +1188,41 @@ public class MainActivity extends ActionBarActivity
     }
 
     private void pause() {
-        if (mediaPlayer != null) {
-            mediaPlayer.pause();
-            isPaused = true;
-            ImageView knob = (ImageView) findViewById(R.id.knob);
-            knob.setImageResource(R.drawable.knob_paused);
+        try {
+            playerConn.messenger.send(Message.obtain(null, MusicService.Msgs.PAUSE));
+            setKnob(PlayerState.PAUSE);
+        } catch (RemoteException e) {
+            musicServiceError(e);
         }
-        if (mediaProgress != null) mediaProgress.cancel();
-        mediaProgress = null;
     }
 
     private void resume() {
-        if (mediaPlayer != null && isPaused) {
-            mediaPlayer.start();
-            isPaused = false;
-            monitorMediaProgress();
-            ImageView knob = (ImageView) findViewById(R.id.knob);
-            knob.setImageResource(R.drawable.knob_playing);
+            //mediaPlayer.start();
+            //isPaused = false;
+            //monitorMediaProgress();
+            //ImageView knob = (ImageView) findViewById(R.id.knob);
+            //knob.setImageResource(R.drawable.knob_playing);
+        try {
+            playerConn.messenger.send(Message.obtain(null, MusicService.Msgs.PLAY));
+            setKnob(PlayerState.PLAY);
         }
+        catch (RemoteException e) {
+            musicServiceError(e);
+        }
+        /*}
         else if (playlist != null && !isStopped) {
             play(playlist);
-        }
+        }*/
     }
 
     private void stop() {
+        try {
+            playerConn.messenger.send(Message.obtain(null, 0));
+            setKnob(PlayerState.STOP);
+        } catch (RemoteException e) {
+            musicServiceError(e);
+        }
+        /*
         if (mediaPlayer != null) mediaPlayer.stop();
         if (playlist != null) playlist.nowPlaying = -1;
         if (mediaProgress != null) mediaProgress.cancel();
@@ -1144,7 +1232,12 @@ public class MainActivity extends ActionBarActivity
         syncStop();
         // Set knob
         ImageView knob = (ImageView) findViewById(R.id.knob);
-        knob.setImageResource(R.drawable.knob_stopped);
+        knob.setImageResource(R.drawable.knob_stopped);*/
+    }
+
+    private void finishPlayback() {
+        stop();
+        onPlaybackEnded();  // should be an event?
     }
 
     private void play(Playlist playlist) {
@@ -1156,7 +1249,7 @@ public class MainActivity extends ActionBarActivity
             playUri(playlist.tracks.get(i).uri);
         }
         else
-            stop();
+            finishPlayback();
     }
 
     private void playNext() {
@@ -1164,12 +1257,13 @@ public class MainActivity extends ActionBarActivity
             playlist.nowPlaying++;
             play(playlist);
         }
-        else stop();
+        else finishPlayback();
     }
 
     private void pauseAfter() {
         // Don't play next track after current track ends
-        if (mediaPlayer != null && mediaPlayer.isPlaying()) {
+        if (playerState == PlayerState.PLAY) {
+            // TODO: use the service callbacks instead
             mediaPlayer.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
                 @Override
                 public void onCompletion(MediaPlayer mp) {
@@ -1204,15 +1298,12 @@ public class MainActivity extends ActionBarActivity
         catch (ArrayIndexOutOfBoundsException e) { text.setText("playlist ended."); }
     }
 
-    private float setVolume(int level, int max) {
+    private void setVolume(int level, int max) {
         volumeLevel = (float)level / (float)max;
-        max++;
-        volumeValue = (float) (1 - (Math.log(max - level) / Math.log(max)));
-        if (mediaPlayer != null)
-            mediaPlayer.setVolume(volumeValue, volumeValue);
-        return volumeValue;
+        musicServiceSend(MusicService.Msgs.VOL_SET, level, max);
     }
 
+    /*
     private void monitorMediaProgress() {
         if (mediaProgress != null) mediaProgress.cancel();
         mediaProgress = new TimerTask() {
@@ -1234,10 +1325,29 @@ public class MainActivity extends ActionBarActivity
 
         if (audioSync != null) audioSync.handshake();
     }
+    */
+
+    private void onMediaProgress(final int pos, final int duration) {
+        final SeekBar seek = (SeekBar) findViewById(R.id.seek);
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+            seek.setMax(duration);
+            seek.setProgress(pos);
+            }
+        });
+    }
+
+    private void onMediaCompleted() {
+        playNext();   // TODO unless pauseAfter was invoked earlier.
+    }
 
     // --------------
     // AudioSync part
     // --------------
+
+    /*= Note: this is currently defunct as media control is offloaded to a service. =*/
+    /*=   This needs to be moved to the service as well. =*/
 
     AudioSync audioSync = null;
 
@@ -1313,11 +1423,22 @@ public class MainActivity extends ActionBarActivity
             case R.id.action_clear:
                 clearMediaLibrary();
                 return true;
+
+            case R.id.action_bluetooth:
+                /* Temporary experimentation */
+                BluetoothAdapter mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+                if (item.isChecked() && mBluetoothAdapter.isEnabled()) {
+                    mBluetoothAdapter.disable();
+                } else if (!item.isChecked() && !mBluetoothAdapter.isEnabled()) {
+                    mBluetoothAdapter.enable();
+                }
+                return true;
         }
 
         return super.onOptionsItemSelected(item);
     }
 
+    @TargetApi(21)
     private void promptSelectFolder() {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
 
@@ -1325,6 +1446,29 @@ public class MainActivity extends ActionBarActivity
         pathList.add(new File(Environment.getExternalStorageDirectory(), "Music").getAbsolutePath());
         pathList.add("/mnt/sdcard/Music");
         pathList.add("/mnt/external_sd/Music");
+        try {
+            /*
+            for (File ef : getExternalMediaDirs()) {
+                pathList.add(ef.getAbsolutePath());
+            }
+            */
+            /*
+            File f = new File("/storage");
+            if (f.exists() && f.isDirectory()) {
+                File[] files = f.listFiles();
+                for (File inFile : files) {
+                    if (inFile.isDirectory()) {
+                        File music = new File(inFile, "Music");
+                        if (music.exists() && music.isDirectory())
+                            pathList.add(music.getAbsolutePath());
+                    }
+                }
+            }
+            */
+        } catch (Exception e) {
+            Toast.makeText(this, "Cannot list /storage: " + e, Toast.LENGTH_SHORT).show();
+        }
+        final int other_index = pathList.size();
         pathList.add("Other...");
 
         final String[] paths = pathList.toArray(new String[pathList.size()]);
@@ -1332,13 +1476,38 @@ public class MainActivity extends ActionBarActivity
         builder.setItems(paths, new DialogInterface.OnClickListener() {
             @Override
             public void onClick(DialogInterface dialog, int which) {
-                setMediaRoot(new File(paths[which]));
+                if (which == other_index) {
+                    promptSelectExternalFolder();
+                }
+                else {
+                    setMediaRoot(new File(paths[which]));
+                }
             }
         })
         .setTitle("Current: " + getMediaRoot()); //"Set Download Folder");
 
         AlertDialog dialog = builder.create();
         dialog.show();
+    }
+
+    private static int ADD_STORAGE_REQUEST_CODE = 4010;
+
+    private void promptSelectExternalFolder() {
+        Intent intent = new Intent(ACTION_OPEN_DOCUMENT_TREE);
+        intent.setPackage("com.android.documentsui");
+        try {
+            startActivityForResult(intent, ADD_STORAGE_REQUEST_CODE);
+        } catch (ActivityNotFoundException e) {
+            Log.e("jukebox", "Open directory tree failed", e);
+        }
+    }
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        Uri uri = null;
+        if (resultCode == RESULT_OK) {
+            uri = data.getData();
+        }
+        Toast.makeText(this, "Activity request="+requestCode+" result=" + resultCode + " uri="+uri, Toast.LENGTH_LONG).show();
     }
 
     private void promptTrackOptions(final Cursor c) {
@@ -1374,8 +1543,18 @@ public class MainActivity extends ActionBarActivity
         List<String> paths = findAllFiles(getMediaRoot());
         String[] mimes = null; //{"*/*"};
         if (paths.isEmpty())
-            Toast.makeText(this, "Media directory is empty!", Toast.LENGTH_LONG).show();
-        else {
+            Toast.makeText(this, "(Media folder is empty.)", Toast.LENGTH_LONG).show();
+
+        /* Scan existing tracks as well in case some of them were deleted */
+        Cursor c = queryMediaTracks(null, null);
+        int i = c.getColumnIndex(MediaStore.MediaColumns.DATA);
+
+        while (c.moveToNext()) {
+            String uri = c.getString(i);
+            if (!paths.contains(uri)) paths.add(uri);
+        }
+
+        if (!paths.isEmpty()) {
             scanProgress = 0;
             scanTotal = paths.size();
             lastFileToScan = paths.get(paths.size() - 1);
@@ -1438,6 +1617,7 @@ public class MainActivity extends ActionBarActivity
 
     private File getMediaRoot() {
         String mediaRoot = prefs.getString("mediaRoot", null);
+
         if (mediaRoot != null && new File(mediaRoot).isDirectory())
             return new File(mediaRoot);
         else
@@ -1472,6 +1652,21 @@ public class MainActivity extends ActionBarActivity
             }
     }
 
+    // ---------------------
+    // BluetoothAdapter part
+    // ---------------------
+
+    void setBluetooth(boolean on) {
+        BluetoothAdapter bt = BluetoothAdapter.getDefaultAdapter();
+        if (bt != null) {
+            if (on && !bt.isEnabled())        bt.enable();
+            else if (!on && bt.isEnabled())   bt.disable();
+        }
+    }
+
+    void onPlaybackEnded() {
+        setBluetooth(false);
+    }
 
     // ---------------
     // SleepTimer part
