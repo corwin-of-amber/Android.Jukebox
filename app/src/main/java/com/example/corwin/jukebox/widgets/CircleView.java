@@ -34,8 +34,8 @@ public class CircleView extends View {
     @Override
     protected void onDraw(final Canvas canvas) {
         super.onDraw(canvas);
-        canvas.drawCircle(size, size, size, fillPaint);
-        canvas.drawCircle(size, size, size, drawPaint);
+        canvas.drawCircle(size, size, size-1, fillPaint);
+        canvas.drawCircle(size, size, size-1, drawPaint);
     }
 
     private void setOnMeasureCallback() {

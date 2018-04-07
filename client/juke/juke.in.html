@@ -4,6 +4,7 @@
 <%= angular />
 
 <script src="juke.ls.js"></script>
+<script src="tags.ls.js"></script>
 <script src="youtube.ls.js"></script>
 
 <link rel="stylesheet" type="text/css" href="juke.css">
@@ -15,7 +16,7 @@
   </div>
   <div id="picker">
   <ul>
-    <li ng-repeat="artist in tracks | project:['artist', pred]" 
+    <li ng-repeat="artist in tracks | project:['artist', pred]"
       ng-click="select.artist=artist"
       ng-class="{hi: select.artist==artist}">
       {{artist}}
@@ -25,9 +26,9 @@
       [all]</li>
   </ul>
   <ul>
-    <li ng-repeat="album in tracks 
+    <li ng-repeat="album in tracks
       | filter:cu({artist: select.artist})
-      | project:['album']" 
+      | project:['album']"
       ng-click="select.album=album"
       ng-class="{hi: select.album==album}">
       {{album}}
@@ -37,18 +38,18 @@
       [all]</li>
   </ul>
   </div>
-  
+
   <div style="clear: both">
     <span ng-click="stop()">[stop]</span>
-    <input type="range" 
+    <input type="range"
       min="0" max="9999"
       ng-attr-max="{{maxVolume}}" ng-model="volume">
     <!-- set max to 9999 initially to avoid clipping
       before ng-attr-max kicks in -->
   </div>
-  
+
   <table style="clear: left">
-    <tr ng-repeat="track in tracks 
+    <tr ng-repeat="track in tracks
            | filter:cu(select):true as viewed"
         ng-click="play(slice(viewed, $index))">
       <td></td>
@@ -64,11 +65,10 @@
     <span id="percentage"></span><br/>
     <input type="checkbox" name="play">play</input>
   </form>
-  
-  <datalist id="recentUrls">
-    <option value="http://192.168.0.7:2222"></option>
-    <option value="http://192.168.0.8:2222"></option>
-    <option value="http://localhost:2222"></option>
-  </datalist>    
-</body>
 
+  <datalist id="recentUrls">
+    <option value="http://10.0.0.2:2222"></option>
+    <option value="http://192.168.1.4:2222"></option>
+    <option value="http://localhost:2222"></option>
+  </datalist>
+</body>

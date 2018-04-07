@@ -11,7 +11,11 @@
   "dependencies": {
     "express": "^4.15.2",
     "fluent-ffmpeg": "^2.1.0",
+    "mdns": "^2.3.4",
     "memory-stream": "0.0.3",
+    "mkdirp": "^0.5.1",
+    "node-id3": "^0.1.0",
+    "which": "^1.2.14",
     "ytdl-core": "^0.11.2"
   }
 }
