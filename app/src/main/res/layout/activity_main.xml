@@ -74,12 +74,13 @@
         android:id="@+id/filterPane"
         android:orientation="horizontal"
         android:layout_width="match_parent"
-        android:layout_height="70dp"
+        android:layout_height="120dp"
         android:layout_gravity="center_horizontal">
 
         <ListView
             android:layout_width="150dp"
             android:layout_height="fill_parent"
+            android:choiceMode="singleChoice"
             android:id="@+id/artists" />
 
         <ImageView
@@ -93,6 +94,7 @@
         <ListView
             android:layout_width="fill_parent"
             android:layout_height="fill_parent"
+            android:choiceMode="singleChoice"
             android:id="@+id/albums" />
 
     </LinearLayout>

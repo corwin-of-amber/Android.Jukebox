@@ -22,13 +22,17 @@ import java.util.Timer;
 import java.util.TimerTask;
 
 /**
- * Created by corwin on 10/03/2018.
+ * This service holds a MediaPlayer reference, to make playback continuous even when
+ * the MainActivity is destroyed.
  */
 
-public class PlayerService extends IntentService {
+public class MusicService extends IntentService {
 
     private static String TAG = "Jukebox/Music";
 
+    /**
+     * Constants for use in Message.what
+     */
     public static class Msgs {
         // Activity -> Service
         public static final int STOP = 0;
@@ -38,6 +42,7 @@ public class PlayerService extends IntentService {
 
         // Service -> Activity
         public static final int PROGRESS = 0;
+        public static final int END = 1;
     }
 
     private MediaPlayer player;
@@ -47,7 +52,7 @@ public class PlayerService extends IntentService {
     private TimerTask mediaProgress = null;
 
 
-    public PlayerService() {
+    public MusicService() {
         super(TAG);
     }
 
@@ -79,12 +84,25 @@ public class PlayerService extends IntentService {
         player = new MediaPlayer();
 
         player.setAudioStreamType(AudioManager.STREAM_MUSIC);
+
+        player.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
+            @Override
+            public void onCompletion(MediaPlayer mp) {
+                stop(); send(Msgs.END);
+            }
+        });
+        player.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
+            @Override
+            public void onPrepared(MediaPlayer mp) {
+                monitorMediaProgress();
+            }
+        });
+
         try {
             player.setDataSource(getApplicationContext(), uri);
             player.setVolume(volumeValue, volumeValue);
             player.prepare();
             player.start();
-            monitorMediaProgress();
         }
         catch (IOException e) {
             Toast.makeText(this, "Failed to open " + uri, Toast.LENGTH_LONG).show();
@@ -130,7 +148,10 @@ public class PlayerService extends IntentService {
             private int duration = player.getDuration();
             @Override
             public void run() {
-                send(Msgs.PROGRESS, player.getCurrentPosition(), duration);
+                try {
+                    send(Msgs.PROGRESS, player.getCurrentPosition(), duration);
+                }
+                catch (IllegalStateException e) { this.cancel(); /* player has been released */ }
             }
         };
         mediaTimer.schedule(mediaProgress, 0, 750);
@@ -185,6 +206,8 @@ public class PlayerService extends IntentService {
     public IBinder onBind(Intent intent) {
         return messenger.getBinder();
     }
+
+    private void send(int what) { send(what, 0, 0); }
 
     private void send(int what, int arg1, int arg2) {
         try {
