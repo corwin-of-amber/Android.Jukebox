@@ -160,13 +160,6 @@ public class MainActivity extends ActionBarActivity
                         else {
                             // Restore image
                             setKnob(playerState);
-                            /*
-                            if (mediaPlayer != null && mediaPlayer.isPlaying())
-                                knob.setImageResource(R.drawable.knob_playing);
-                            else if (mediaPlayer != null && isPaused || playlist != null && !isStopped)
-                                knob.setImageResource(R.drawable.knob_paused);
-                            else
-                                knob.setImageResource(R.drawable.knob_stopped); */
                         }
                         break;
                 }
@@ -176,12 +169,22 @@ public class MainActivity extends ActionBarActivity
         knob.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                switch (playerState) {
+                    case PLAY:
+                        pause(); break;
+                    case PAUSE:
+                        resume(); break;
+                    default:  /* including PAUSE_EOT, which is between tracks */
+                        play(playlist != null ? playlist : playlistAll());
+                }
+                /*
                 if (playerState == PlayerState.PLAY) //mediaPlayer != null && mediaPlayer.isPlaying())
                     pause();
                 else if (playerState == PlayerState.PAUSE) //mediaPlayer != null && isPaused || playlist != null && !isStopped)
                     resume();
                 else
                     play(playlist != null ? playlist : playlistAll());
+                    */
             }
         });
         knob.setOnLongClickListener(new View.OnLongClickListener() {
@@ -1104,12 +1107,13 @@ public class MainActivity extends ActionBarActivity
     // MediaPlayer part
     // ----------------
 
-    enum PlayerState { NONE, PLAY, PAUSE, STOP }
-
-    TimerTask mediaProgress = null;
-    float volumeLevel = 1.0f;
+    enum PlayerState { NONE, PLAY, PAUSE, PAUSE_EOT, STOP }
 
     PlayerState playerState = PlayerState.NONE;
+    float volumeLevel = 1.0f;
+    boolean autoplay = true;
+
+    //TimerTask mediaProgress = null;
 
     MusicService.Connection playerConn;
     Messenger playerCallback = new Messenger(new Handler() {
@@ -1141,7 +1145,7 @@ public class MainActivity extends ActionBarActivity
     }
 
     private void musicServiceSend(int what, int arg1, int arg2) {
-        if (playerConn != null) {
+        if (playerConn != null && playerConn.messenger != null) {
             try {
                 playerConn.messenger.send(Message.obtain(null, what, arg1, arg2));
             }
@@ -1149,6 +1153,9 @@ public class MainActivity extends ActionBarActivity
                 musicServiceError(e);
             }
         }
+        // messages may be lost of sent before connection was established.
+        // this can happen e.g. with the volume setting at startup.
+        // seems like an overkill though to queue them up.
     }
 
     private void musicServiceError(RemoteException e) {
@@ -1161,9 +1168,10 @@ public class MainActivity extends ActionBarActivity
         int image = 0;
         switch (newState) {
             case NONE:
-            case STOP:  image = R.drawable.knob_stopped; break;
-            case PLAY:  image = R.drawable.knob_playing; break;
-            case PAUSE: image = R.drawable.knob_paused;  break;
+            case STOP:      image = R.drawable.knob_stopped; break;
+            case PLAY:      image = R.drawable.knob_playing; break;
+            case PAUSE:
+            case PAUSE_EOT: image = R.drawable.knob_paused;  break;
         }
         if (BuildConfig.DEBUG && image == 0) throw new AssertionError();
         knob.setImageResource(image);
@@ -1218,6 +1226,7 @@ public class MainActivity extends ActionBarActivity
     private void stop() {
         try {
             playerConn.messenger.send(Message.obtain(null, 0));
+            playlist = null;
             setKnob(PlayerState.STOP);
         } catch (RemoteException e) {
             musicServiceError(e);
@@ -1246,6 +1255,7 @@ public class MainActivity extends ActionBarActivity
         if (i < playlist.tracks.size()) {
             playlist.nowPlaying  = i;
             nowPlaying(playlist);
+            autoplay = true;
             playUri(playlist.tracks.get(i).uri);
         }
         else
@@ -1263,7 +1273,8 @@ public class MainActivity extends ActionBarActivity
     private void pauseAfter() {
         // Don't play next track after current track ends
         if (playerState == PlayerState.PLAY) {
-            // TODO: use the service callbacks instead
+            autoplay = false;
+            /*
             mediaPlayer.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
                 @Override
                 public void onCompletion(MediaPlayer mp) {
@@ -1278,7 +1289,7 @@ public class MainActivity extends ActionBarActivity
                         public void run() { zeroTimer(); }
                     });
                 }
-            });
+            });*/
         }
     }
 
@@ -1339,7 +1350,24 @@ public class MainActivity extends ActionBarActivity
     }
 
     private void onMediaCompleted() {
-        playNext();   // TODO unless pauseAfter was invoked earlier.
+        if (autoplay)
+            playNext();
+        else {
+            if (playlist != null) {
+                playlist.nowPlaying++;
+                if (playlist.nowPlaying >= playlist.tracks.size())
+                    stop();
+                else
+                    setKnob(PlayerState.PAUSE_EOT);  /* "between tracks" */
+
+                onPlaybackEnded();
+
+                later(1000, new Runnable() {
+                    @Override
+                    public void run() { resetTimer(); }
+                });
+            }
+        }
     }
 
     // --------------
@@ -1690,12 +1718,12 @@ public class MainActivity extends ActionBarActivity
                         updateTimeLeft();
                         if (timeLeft == 0) {
                             stopTimer();
-                            if (mediaPlayer != null && mediaPlayer.isPlaying())
+                            if (playerState == PlayerState.PLAY)
                                 pauseAfter();
                             else
                                 later(1000, new Runnable() {
                                     @Override
-                                    public void run() { zeroTimer(); }
+                                    public void run() { resetTimer(); }
                                 } );
                         }
                     }
@@ -1715,7 +1743,7 @@ public class MainActivity extends ActionBarActivity
         sleepIndicator("⧖");
     }
 
-    private void zeroTimer() {
+    private void resetTimer() {
         if (timeLeft == 0) {
             timeLeft = 80;
             updateTimeLeft();
@@ -1724,7 +1752,7 @@ public class MainActivity extends ActionBarActivity
 
     private void updateTimeLeft() {
         TextView sleepTime = (TextView) findViewById(R.id.sleepTime);
-        sleepTime.setText(""+timeLeft);
+        sleepTime.setText(String.format("%d", timeLeft));
     }
 
     private void sleepIndicator(String symbol) {
