@@ -8,15 +8,17 @@ MEDIA_EXTENSIONS = <[mp3 opus ogg m4a wma]>
 /**
  * Example: set-album-metadata("Music/My Album", {artist: 'Richard Clayderman', album: 'Gold Selection'})
  */
-set-album-metadata = (root-dir, metadata, out-dir=void) ->
+set-album-metadata = (input-spec, metadata, out-dir=void) ->
 
   ext = MEDIA_EXTENSIONS.join('|')
 
-  input-files = [path.join(root-dir, fn) for fn in fs.readdirSync(root-dir)
-                 when //[.](#{ext})$//.exec(fn)]
+  root-dir = get-root-dir(input-spec) ? '.'
+  input-files = find-input-files(input-spec)
 
   out-dir = path.join(root-dir, 'out')
   mkdirp.sync out-dir
+
+  console.log "Writing to: #{out-dir}"
 
   Promise.chain do
     for let in-fn in input-files
@@ -27,7 +29,7 @@ set-album-metadata = (root-dir, metadata, out-dir=void) ->
       ->
         console.log out-fn
         set-metadata in-fn, out-fn, metadata
-    #return
+        .then -> if metadata.track then metadata.track++
 
 Promise.chain = (ops) ->
     ops.reduce (p, f) -> p.then f
@@ -52,6 +54,35 @@ set-metadata = (infile, outfile, metadata-props={}) ->
       console.log '[ffmpeg] error: ' + err.message
       reject err
     .save(outfile)
+
+
+find-input-files = (spec) ->
+  if typeof spec == 'string'
+    try
+      l = fs.lstatSync spec
+      if l.isDirectory!
+        ext = MEDIA_EXTENSIONS.join('|')
+        [path.join(spec, fn) for fn in fs.readdirSync(spec)
+         when //[.](#{ext})$//.exec(fn)]
+      else
+        [spec]
+    catch e
+      console.error "#{spec}: #e"
+      []
+  else
+    [].concat ...[find-input-files .. for spec]
+
+get-root-dir = (spec) ->
+  if typeof spec == 'string'
+    try
+      l = fs.lstatSync spec
+      if l.isDirectory! then return spec
+      else return path.dirname(spec)
+    catch
+      void
+  else
+    for d in spec
+      if (res = get-root-dir d)? then return res
 
 
 # OOPS
@@ -79,4 +110,4 @@ if typeof module != 'undefined' && require.main == module
   console.log metadata
   dir-path = argv._[0] ? '.'
 
-  set-album-metadata dir-path, metadata, argv.o ? argv['output-dir']
+  set-album-metadata (if argv._[0] then argv._ else '.'), metadata, argv.o ? argv['output-dir']
